@@ -61,16 +61,10 @@ init_db()
 conn = get_conn()
 c = conn.cursor()
 
-# Quiz versioning (CRITICAL FIX)
-if "quiz_id" not in st.session_state:
-    st.session_state.quiz_id = 0
-
 tabs = st.tabs(["➕ Add Words", "📝 Review / Edit", "🧠 Flashcards", "📝 Quiz"])
 
 # ================= ADD WORDS =================
 with tabs[0]:
-    st.subheader("Add Weekly Vocabulary")
-
     words_input = st.text_area("Paste words (one per line):", height=200)
 
     if st.button("Fetch & Save"):
@@ -92,7 +86,7 @@ with tabs[0]:
                 )
 
         conn.commit()
-        st.success("Words added successfully.")
+        st.success("Words added.")
 
     if st.button("🧹 Clear All Words (New Week)"):
         c.execute("DELETE FROM sentences")
@@ -100,91 +94,29 @@ with tabs[0]:
         c.execute("DELETE FROM words")
         conn.commit()
         st.session_state.clear()
-        st.success("All words cleared. Ready for a new week.")
+        st.success("All words cleared.")
 
 # ================= REVIEW / EDIT =================
 with tabs[1]:
-    st.subheader("Review and Edit Words")
-
     c.execute("SELECT word FROM words ORDER BY word")
     words = [r[0] for r in c.fetchall()]
 
-    if not words:
-        st.info("No words added yet.")
-    else:
-        word = st.selectbox("Select a word:", words)
-
+    if words:
+        word = st.selectbox("Select word:", words)
         c.execute("SELECT id FROM words WHERE word=?", (word,))
         wid = c.fetchone()[0]
 
         c.execute("SELECT definition FROM definitions WHERE word_id=?", (wid,))
         definition = c.fetchone()[0]
-        new_def = st.text_area("Definition:", definition, height=100)
+        new_def = st.text_area("Definition:", definition)
 
         if st.button("Save Definition"):
-            c.execute(
-                "UPDATE definitions SET definition=? WHERE word_id=?",
-                (new_def.strip(), wid)
-            )
+            c.execute("UPDATE definitions SET definition=? WHERE word_id=?", (new_def, wid))
             conn.commit()
             st.success("Definition saved.")
 
-        c.execute("""
-            SELECT id, sentence, is_primary
-            FROM sentences
-            WHERE word_id=?
-            ORDER BY is_primary DESC, id
-        """, (wid,))
-        rows = c.fetchall()
-
-        st.markdown("### Sentences")
-
-        if rows:
-            sentence_map = {
-                f"{'⭐ ' if r[2] else ''}{r[1]}": r[0]
-                for r in rows
-            }
-
-            selected = st.radio(
-                "Select a sentence:",
-                list(sentence_map.keys()),
-                index=0
-            )
-            sid = sentence_map[selected]
-
-            col1, col2 = st.columns(2)
-
-            if col1.button("Set as Primary"):
-                c.execute("UPDATE sentences SET is_primary=0 WHERE word_id=?", (wid,))
-                c.execute("UPDATE sentences SET is_primary=1 WHERE id=?", (sid,))
-                conn.commit()
-                st.rerun()
-
-            if col2.button("Delete Sentence"):
-                c.execute("DELETE FROM sentences WHERE id=?", (sid,))
-                conn.commit()
-                st.rerun()
-        else:
-            st.info("No sentences exist for this word. Add one below.")
-
-        new_sentence = st.text_input("Add a new sentence:")
-        if st.button("Add Sentence") and new_sentence:
-            c.execute("SELECT COUNT(*) FROM sentences WHERE word_id=?", (wid,))
-            count = c.fetchone()[0]
-            is_primary = 1 if count == 0 else 0
-
-            c.execute(
-                "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, ?)",
-                (wid, new_sentence, is_primary)
-            )
-            conn.commit()
-            st.success("Sentence added.")
-            st.rerun()
-
 # ================= FLASHCARDS =================
 with tabs[2]:
-    st.subheader("Flashcards")
-
     if st.button("Next Card"):
         st.session_state.pop("flash", None)
 
@@ -201,15 +133,13 @@ with tabs[2]:
         st.session_state.flash = c.fetchone()
 
     if st.session_state.flash:
-        word, definition, sentence = st.session_state.flash
-        st.markdown(f"## **{word}**")
+        w, d, s = st.session_state.flash
+        st.markdown(f"## **{w}**")
         if st.button("Reveal"):
-            st.write(definition)
-            st.write(sentence)
-    else:
-        st.info("No words available.")
+            st.write(d)
+            st.write(s)
 
-# ================= QUIZ =================
+# ================= QUIZ (FORM-BASED, STABLE) =================
 with tabs[3]:
     st.subheader("Multiple-Choice Quiz")
 
@@ -227,32 +157,31 @@ with tabs[3]:
         quiz = []
         for w, s in items:
             options = [x[0] for x in items if x[0] != w]
-            options = random.sample(options, min(3, len(options)))
-            options.append(w)
+            options = random.sample(options, min(3, len(options))) + [w]
             random.shuffle(options)
             quiz.append({"word": w, "sentence": s, "options": options})
 
         st.session_state.quiz = quiz
-        st.session_state.answers = {}
 
-    quiz_id = st.session_state.quiz_id
+    with st.form("quiz_form"):
+        answers = {}
+        for i, q in enumerate(st.session_state.quiz):
+            blank = re.sub(rf"\b{re.escape(q['word'])}\b", "_____", q["sentence"])
+            st.markdown(f"**{i+1}. {blank}**")
+            answers[i] = st.radio(
+                "Choose:",
+                q["options"],
+                index=None,
+                key=f"quiz_{i}"
+            )
 
-    for i, q in enumerate(st.session_state.quiz):
-        blank = re.sub(rf"\b{re.escape(q['word'])}\b", "_____", q["sentence"])
-        st.markdown(f"**{i+1}. {blank}**")
+        submitted = st.form_submit_button("Submit Quiz")
 
-        st.session_state.answers[i] = st.radio(
-            "Choose:",
-            q["options"],
-            key=f"q{quiz_id}_{i}",
-            index=None
-        )
-
-    if st.button("Submit Quiz"):
+    if submitted:
         score = 0
         st.markdown("---")
         for i, q in enumerate(st.session_state.quiz):
-            user = st.session_state.answers.get(i)
+            user = answers.get(i)
             correct = q["word"]
             if user == correct:
                 score += 1
@@ -261,10 +190,12 @@ with tabs[3]:
             st.write(f"Correct answer: **{correct}**")
             st.write(restored)
             st.write("---")
+
         st.success(f"Score: {score}/{len(st.session_state.quiz)}")
 
         if st.button("Start New Quiz"):
-            st.session_state.quiz_id += 1
-            st.session_state.pop("quiz", None)
-            st.session_state.pop("answers", None)
+            st.session_state.pop("quiz")
+            for k in list(st.session_state.keys()):
+                if k.startswith("quiz_"):
+                    del st.session_state[k]
             st.rerun()
