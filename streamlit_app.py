@@ -61,6 +61,10 @@ init_db()
 conn = get_conn()
 c = conn.cursor()
 
+# Quiz versioning (CRITICAL FIX)
+if "quiz_id" not in st.session_state:
+    st.session_state.quiz_id = 0
+
 tabs = st.tabs(["➕ Add Words", "📝 Review / Edit", "🧠 Flashcards", "📝 Quiz"])
 
 # ================= ADD WORDS =================
@@ -80,10 +84,7 @@ with tabs[0]:
                 (wid, fetch_definition(word))
             )
 
-            c.execute(
-                "SELECT COUNT(*) FROM sentences WHERE word_id=?",
-                (wid,)
-            )
+            c.execute("SELECT COUNT(*) FROM sentences WHERE word_id=?", (wid,))
             if c.fetchone()[0] == 0:
                 c.execute(
                     "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, 1)",
@@ -116,7 +117,6 @@ with tabs[1]:
         c.execute("SELECT id FROM words WHERE word=?", (word,))
         wid = c.fetchone()[0]
 
-        # Definition
         c.execute("SELECT definition FROM definitions WHERE word_id=?", (wid,))
         definition = c.fetchone()[0]
         new_def = st.text_area("Definition:", definition, height=100)
@@ -129,7 +129,6 @@ with tabs[1]:
             conn.commit()
             st.success("Definition saved.")
 
-        # Sentences
         c.execute("""
             SELECT id, sentence, is_primary
             FROM sentences
@@ -170,10 +169,7 @@ with tabs[1]:
 
         new_sentence = st.text_input("Add a new sentence:")
         if st.button("Add Sentence") and new_sentence:
-            c.execute(
-                "SELECT COUNT(*) FROM sentences WHERE word_id=?",
-                (wid,)
-            )
+            c.execute("SELECT COUNT(*) FROM sentences WHERE word_id=?", (wid,))
             count = c.fetchone()[0]
             is_primary = 1 if count == 0 else 0
 
@@ -239,13 +235,16 @@ with tabs[3]:
         st.session_state.quiz = quiz
         st.session_state.answers = {}
 
+    quiz_id = st.session_state.quiz_id
+
     for i, q in enumerate(st.session_state.quiz):
         blank = re.sub(rf"\b{re.escape(q['word'])}\b", "_____", q["sentence"])
         st.markdown(f"**{i+1}. {blank}**")
+
         st.session_state.answers[i] = st.radio(
             "Choose:",
             q["options"],
-            key=f"q{i}",
+            key=f"q{quiz_id}_{i}",
             index=None
         )
 
@@ -265,14 +264,7 @@ with tabs[3]:
         st.success(f"Score: {score}/{len(st.session_state.quiz)}")
 
         if st.button("Start New Quiz"):
-            # Clear quiz data
+            st.session_state.quiz_id += 1
             st.session_state.pop("quiz", None)
             st.session_state.pop("answers", None)
-
-            # Clear radio button widget state
-            for key in list(st.session_State.keys()):
-                if key.startswith("q"):
-                    del st.session_State[key]
-                    
             st.rerun()
-
