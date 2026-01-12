@@ -3,7 +3,6 @@ import sqlite3
 import requests
 import random
 import re
-import os
 
 # ================= CONFIG =================
 WORDNIK_API_KEY = "8mua68owf2ae0sarae049njpelzl39ydn456om6pxqnci2pjj"
@@ -66,7 +65,24 @@ def generate_primary_sentence(word):
     ]
     return random.choice(templates)
 
-# ================= UI =================
+# ================= QUIZ STATE =================
+def init_quiz_state():
+    if "quiz_items" not in st.session_state:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT words.word, sentences.sentence
+            FROM words
+            JOIN sentences ON words.id = sentences.word_id
+            WHERE sentences.is_primary = 1
+            ORDER BY RANDOM()
+            LIMIT ?
+        """, (QUIZ_SIZE,))
+        st.session_state.quiz_items = c.fetchall()
+        st.session_state.quiz_answers = {}
+        st.session_state.quiz_submitted = False
+
+# ================= APP =================
 st.set_page_config(page_title="AP Lang Vocabulary Tutor", layout="wide")
 st.title("📘 AP Language Vocabulary Tutor")
 
@@ -98,8 +114,10 @@ with tabs[0]:
 
             c.execute("SELECT 1 FROM definitions WHERE word_id=?", (word_id,))
             if not c.fetchone():
-                c.execute("INSERT INTO definitions VALUES (?, ?)",
-                          (word_id, fetch_definition(word)))
+                c.execute(
+                    "INSERT INTO definitions VALUES (?, ?)",
+                    (word_id, fetch_definition(word))
+                )
 
             c.execute("SELECT 1 FROM sentences WHERE word_id=? AND is_primary=1", (word_id,))
             if not c.fetchone():
@@ -118,6 +136,7 @@ with tabs[0]:
             c.execute("DELETE FROM words")
             conn.commit()
             st.success("All words cleared. Ready for a new week.")
+            st.session_state.clear()
 
 # ---------- REVIEW / EDIT ----------
 with tabs[1]:
@@ -137,20 +156,23 @@ with tabs[1]:
 
         new_def = st.text_area("Definition:", value=definition, height=100)
         if st.button("Save Definition"):
-            c.execute("UPDATE definitions SET definition=? WHERE word_id=?",
-                      (new_def.strip(), word_id))
+            c.execute(
+                "UPDATE definitions SET definition=? WHERE word_id=?",
+                (new_def.strip(), word_id)
+            )
             conn.commit()
             st.success("Definition saved.")
 
         c.execute("""
-            SELECT sentence, is_primary FROM sentences
+            SELECT id, sentence, is_primary
+            FROM sentences
             WHERE word_id=?
             ORDER BY is_primary DESC, id ASC
         """, (word_id,))
         sentences = c.fetchall()
 
         st.markdown("**Sentences (primary shown first):**")
-        for s, primary in sentences:
+        for sid, s, primary in sentences:
             st.write(("⭐ " if primary else "• ") + s)
 
         new_sentence = st.text_input("Add a new sentence:")
@@ -166,20 +188,21 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Flashcards")
 
+    if st.button("Next Card"):
+        st.rerun()
+
     c.execute("""
         SELECT words.word, definitions.definition, sentences.sentence
         FROM words
-        JOIN definitions ON words.id=definitions.word_id
-        JOIN sentences ON words.id=sentences.word_id
-        WHERE sentences.is_primary=1
-        ORDER BY RANDOM() LIMIT 1
+        JOIN definitions ON words.id = definitions.word_id
+        JOIN sentences ON words.id = sentences.word_id
+        WHERE sentences.is_primary = 1
+        ORDER BY RANDOM()
+        LIMIT 1
     """)
     row = c.fetchone()
 
     if row:
-        if st.button("Next Card"):
-            st.rerun()
-
         st.markdown(f"## **{row[0]}**")
         if st.button("Reveal"):
             st.write(row[1])
@@ -187,20 +210,12 @@ with tabs[2]:
     else:
         st.info("No words added yet.")
 
-# ---------- MULTIPLE CHOICE ----------
+# ---------- MULTIPLE CHOICE QUIZ ----------
 with tabs[3]:
     st.subheader("Multiple-Choice Quiz")
 
-    c.execute("""
-        SELECT words.word, sentences.sentence
-        FROM words JOIN sentences ON words.id=sentences.word_id
-        WHERE sentences.is_primary=1
-        ORDER BY RANDOM() LIMIT ?
-    """, (QUIZ_SIZE,))
-    quiz_items = c.fetchall()
-
-    answers = {}
-    score = 0
+    init_quiz_state()
+    quiz_items = st.session_state.quiz_items
 
     for i, (correct, sentence) in enumerate(quiz_items):
         blank = re.sub(rf"\b{re.escape(correct)}\b", "_____", sentence)
@@ -208,27 +223,38 @@ with tabs[3]:
 
         options = random.sample(
             [w for w, _ in quiz_items if w != correct],
-            min(3, len(quiz_items)-1)
+            min(3, len(quiz_items) - 1)
         ) + [correct]
         random.shuffle(options)
 
-        answers[i] = st.radio(
+        st.session_state.quiz_answers[i] = st.radio(
             "Choose:",
             options,
-            key=f"q{i}",
-            index=None
+            key=f"q{i}"
         )
 
     if st.button("Submit Quiz"):
+        st.session_state.quiz_submitted = True
+
+    if st.session_state.quiz_submitted:
+        score = 0
+        st.markdown("---")
+
         for i, (correct, sentence) in enumerate(quiz_items):
-            if answers[i] == correct:
+            user = st.session_state.quiz_answers.get(i)
+            if user == correct:
                 score += 1
 
             restored = re.sub(rf"\b{re.escape(correct)}\b", correct, sentence)
-            st.write(f"**Q{i+1}** — Your answer: {answers[i] or '[none]'}")
+            st.write(f"**Q{i+1}** — Your answer: {user or '[none]'}")
             st.write(f"Correct answer: **{correct}**")
             st.write(f"Sentence: {restored}")
             st.write("---")
 
         st.success(f"Final Score: {score}/{len(quiz_items)}")
 
+        if st.button("Start New Quiz"):
+            del st.session_state.quiz_items
+            del st.session_state.quiz_answers
+            del st.session_state.quiz_submitted
+            st.rerun()
