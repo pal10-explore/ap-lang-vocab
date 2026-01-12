@@ -178,7 +178,7 @@ with tabs[2]:
 
     if row:
         if st.button("Next Card"):
-            st.experimental_rerun()
+            st.rerun()
 
         st.markdown(f"## **{row[0]}**")
         if st.button("Reveal"):
@@ -231,3 +231,4 @@ with tabs[3]:
             st.write("---")
 
         st.success(f"Final Score: {score}/{len(quiz_items)}")
+
