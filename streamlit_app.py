@@ -54,7 +54,7 @@ def generate_primary_sentence(word):
     return random.choice(templates)
 
 # ================= INIT =================
-st.set_page_config("AP Lang Vocabulary Tutor", layout="wide")
+st.set_page_config(page_title="AP Lang Vocabulary Tutor", layout="wide")
 st.title("📘 AP Language Vocabulary Tutor")
 
 init_db()
@@ -65,19 +65,33 @@ tabs = st.tabs(["➕ Add Words", "📝 Review / Edit", "🧠 Flashcards", "📝 
 
 # ================= ADD WORDS =================
 with tabs[0]:
+    st.subheader("Add Weekly Vocabulary")
+
     words_input = st.text_area("Paste words (one per line):", height=200)
 
     if st.button("Fetch & Save"):
-        for w in [w.strip().lower() for w in words_input.splitlines() if w.strip()]:
-            c.execute("INSERT OR IGNORE INTO words (word) VALUES (?)", (w,))
-            c.execute("SELECT id FROM words WHERE word=?", (w,))
+        for word in [w.strip().lower() for w in words_input.splitlines() if w.strip()]:
+            c.execute("INSERT OR IGNORE INTO words (word) VALUES (?)", (word,))
+            c.execute("SELECT id FROM words WHERE word=?", (word,))
             wid = c.fetchone()[0]
 
-            c.execute("INSERT OR IGNORE INTO definitions VALUES (?, ?)", (wid, fetch_definition(w)))
-            c.execute("INSERT OR IGNORE INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, 1)",
-                      (wid, generate_primary_sentence(w)))
+            c.execute(
+                "INSERT OR IGNORE INTO definitions VALUES (?, ?)",
+                (wid, fetch_definition(word))
+            )
+
+            c.execute(
+                "SELECT COUNT(*) FROM sentences WHERE word_id=?",
+                (wid,)
+            )
+            if c.fetchone()[0] == 0:
+                c.execute(
+                    "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, 1)",
+                    (wid, generate_primary_sentence(word))
+                )
+
         conn.commit()
-        st.success("Words added.")
+        st.success("Words added successfully.")
 
     if st.button("🧹 Clear All Words (New Week)"):
         c.execute("DELETE FROM sentences")
@@ -85,27 +99,37 @@ with tabs[0]:
         c.execute("DELETE FROM words")
         conn.commit()
         st.session_state.clear()
-        st.success("All words cleared.")
+        st.success("All words cleared. Ready for a new week.")
 
 # ================= REVIEW / EDIT =================
 with tabs[1]:
+    st.subheader("Review and Edit Words")
+
     c.execute("SELECT word FROM words ORDER BY word")
     words = [r[0] for r in c.fetchall()]
 
-    if words:
-        word = st.selectbox("Select word", words)
+    if not words:
+        st.info("No words added yet.")
+    else:
+        word = st.selectbox("Select a word:", words)
+
         c.execute("SELECT id FROM words WHERE word=?", (word,))
         wid = c.fetchone()[0]
 
+        # Definition
         c.execute("SELECT definition FROM definitions WHERE word_id=?", (wid,))
         definition = c.fetchone()[0]
-        new_def = st.text_area("Definition", definition)
+        new_def = st.text_area("Definition:", definition, height=100)
 
         if st.button("Save Definition"):
-            c.execute("UPDATE definitions SET definition=? WHERE word_id=?", (new_def, wid))
+            c.execute(
+                "UPDATE definitions SET definition=? WHERE word_id=?",
+                (new_def.strip(), wid)
+            )
             conn.commit()
             st.success("Definition saved.")
 
+        # Sentences
         c.execute("""
             SELECT id, sentence, is_primary
             FROM sentences
@@ -115,63 +139,56 @@ with tabs[1]:
         rows = c.fetchall()
 
         st.markdown("### Sentences")
+
         if rows:
-    sentence_map = {f"{'⭐ ' if r[2] else ''}{r[1]}": r[0] for r in rows}
-    selected = st.radio(
-        "Select sentence:",
-        list(sentence_map.keys()),
-        index=0
-    )
-    sid = sentence_map[selected]
+            sentence_map = {
+                f"{'⭐ ' if r[2] else ''}{r[1]}": r[0]
+                for r in rows
+            }
 
-    col1, col2 = st.columns(2)
+            selected = st.radio(
+                "Select a sentence:",
+                list(sentence_map.keys()),
+                index=0
+            )
+            sid = sentence_map[selected]
 
-    if col1.button("Set as Primary"):
-        c.execute("UPDATE sentences SET is_primary=0 WHERE word_id=?", (wid,))
-        c.execute("UPDATE sentences SET is_primary=1 WHERE id=?", (sid,))
-        conn.commit()
-        st.rerun()
+            col1, col2 = st.columns(2)
 
-    if col2.button("Delete Sentence"):
-        c.execute("DELETE FROM sentences WHERE id=?", (sid,))
-        conn.commit()
-        st.rerun()
+            if col1.button("Set as Primary"):
+                c.execute("UPDATE sentences SET is_primary=0 WHERE word_id=?", (wid,))
+                c.execute("UPDATE sentences SET is_primary=1 WHERE id=?", (sid,))
+                conn.commit()
+                st.rerun()
 
-else:
-    st.info("No sentences exist for this word. Add one below.")
+            if col2.button("Delete Sentence"):
+                c.execute("DELETE FROM sentences WHERE id=?", (sid,))
+                conn.commit()
+                st.rerun()
+        else:
+            st.info("No sentences exist for this word. Add one below.")
 
-
-        col1, col2 = st.columns(2)
-        if col1.button("Set as Primary"):
-            c.execute("UPDATE sentences SET is_primary=0 WHERE word_id=?", (wid,))
-            c.execute("UPDATE sentences SET is_primary=1 WHERE id=?", (sid,))
-            conn.commit()
-            st.rerun()
-
-        if col2.button("Delete Sentence"):
-            c.execute("DELETE FROM sentences WHERE id=?", (sid,))
-            conn.commit()
-            st.rerun()
-
-        new_sentence = st.text_input("Add new sentence")
+        new_sentence = st.text_input("Add a new sentence:")
         if st.button("Add Sentence") and new_sentence:
-    # If no sentences exist, make this one primary
-    c.execute("SELECT COUNT(*) FROM sentences WHERE word_id=?", (wid,))
-    count = c.fetchone()[0]
+            c.execute(
+                "SELECT COUNT(*) FROM sentences WHERE word_id=?",
+                (wid,)
+            )
+            count = c.fetchone()[0]
+            is_primary = 1 if count == 0 else 0
 
-    is_primary = 1 if count == 0 else 0
-
-    c.execute(
-        "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, ?)",
-        (wid, new_sentence, is_primary)
-    )
-    conn.commit()
-    st.success("Sentence added.")
-    st.rerun()
-
+            c.execute(
+                "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, ?)",
+                (wid, new_sentence, is_primary)
+            )
+            conn.commit()
+            st.success("Sentence added.")
+            st.rerun()
 
 # ================= FLASHCARDS =================
 with tabs[2]:
+    st.subheader("Flashcards")
+
     if st.button("Next Card"):
         st.session_state.pop("flash", None)
 
@@ -179,10 +196,11 @@ with tabs[2]:
         c.execute("""
             SELECT words.word, definitions.definition, sentences.sentence
             FROM words
-            JOIN definitions ON words.id=definitions.word_id
-            JOIN sentences ON words.id=sentences.word_id
-            WHERE sentences.is_primary=1
-            ORDER BY RANDOM() LIMIT 1
+            JOIN definitions ON words.id = definitions.word_id
+            JOIN sentences ON words.id = sentences.word_id
+            WHERE sentences.is_primary = 1
+            ORDER BY RANDOM()
+            LIMIT 1
         """)
         st.session_state.flash = c.fetchone()
 
@@ -192,22 +210,29 @@ with tabs[2]:
         if st.button("Reveal"):
             st.write(definition)
             st.write(sentence)
+    else:
+        st.info("No words available.")
 
 # ================= QUIZ =================
 with tabs[3]:
+    st.subheader("Multiple-Choice Quiz")
+
     if "quiz" not in st.session_state:
         c.execute("""
             SELECT words.word, sentences.sentence
-            FROM words JOIN sentences ON words.id=sentences.word_id
-            WHERE sentences.is_primary=1
-            ORDER BY RANDOM() LIMIT ?
+            FROM words
+            JOIN sentences ON words.id = sentences.word_id
+            WHERE sentences.is_primary = 1
+            ORDER BY RANDOM()
+            LIMIT ?
         """, (QUIZ_SIZE,))
         items = c.fetchall()
 
         quiz = []
         for w, s in items:
             options = [x[0] for x in items if x[0] != w]
-            options = random.sample(options, min(3, len(options))) + [w]
+            options = random.sample(options, min(3, len(options)))
+            options.append(w)
             random.shuffle(options)
             quiz.append({"word": w, "sentence": s, "options": options})
 
@@ -234,14 +259,12 @@ with tabs[3]:
                 score += 1
             restored = re.sub(rf"\b{re.escape(correct)}\b", correct, q["sentence"])
             st.write(f"Your answer: {user or '[none]'}")
-            st.write(f"Correct: **{correct}**")
+            st.write(f"Correct answer: **{correct}**")
             st.write(restored)
             st.write("---")
-
         st.success(f"Score: {score}/{len(st.session_state.quiz)}")
 
         if st.button("Start New Quiz"):
             st.session_state.pop("quiz")
             st.session_state.pop("answers")
             st.rerun()
-
