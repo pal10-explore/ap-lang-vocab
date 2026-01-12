@@ -115,9 +115,31 @@ with tabs[1]:
         rows = c.fetchall()
 
         st.markdown("### Sentences")
-        sentence_map = {f"{'⭐ ' if r[2] else ''}{r[1]}": r[0] for r in rows}
-        selected = st.radio("Select sentence:", list(sentence_map.keys()), index=0)
-        sid = sentence_map[selected]
+        if rows:
+    sentence_map = {f"{'⭐ ' if r[2] else ''}{r[1]}": r[0] for r in rows}
+    selected = st.radio(
+        "Select sentence:",
+        list(sentence_map.keys()),
+        index=0
+    )
+    sid = sentence_map[selected]
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("Set as Primary"):
+        c.execute("UPDATE sentences SET is_primary=0 WHERE word_id=?", (wid,))
+        c.execute("UPDATE sentences SET is_primary=1 WHERE id=?", (sid,))
+        conn.commit()
+        st.rerun()
+
+    if col2.button("Delete Sentence"):
+        c.execute("DELETE FROM sentences WHERE id=?", (sid,))
+        conn.commit()
+        st.rerun()
+
+else:
+    st.info("No sentences exist for this word. Add one below.")
+
 
         col1, col2 = st.columns(2)
         if col1.button("Set as Primary"):
@@ -132,10 +154,21 @@ with tabs[1]:
             st.rerun()
 
         new_sentence = st.text_input("Add new sentence")
-        if st.button("Add Sentence"):
-            c.execute("INSERT INTO sentences (word_id, sentence) VALUES (?, ?)", (wid, new_sentence))
-            conn.commit()
-            st.success("Sentence added.")
+        if st.button("Add Sentence") and new_sentence:
+    # If no sentences exist, make this one primary
+    c.execute("SELECT COUNT(*) FROM sentences WHERE word_id=?", (wid,))
+    count = c.fetchone()[0]
+
+    is_primary = 1 if count == 0 else 0
+
+    c.execute(
+        "INSERT INTO sentences (word_id, sentence, is_primary) VALUES (?, ?, ?)",
+        (wid, new_sentence, is_primary)
+    )
+    conn.commit()
+    st.success("Sentence added.")
+    st.rerun()
+
 
 # ================= FLASHCARDS =================
 with tabs[2]:
@@ -211,3 +244,4 @@ with tabs[3]:
             st.session_state.pop("quiz")
             st.session_state.pop("answers")
             st.rerun()
+
