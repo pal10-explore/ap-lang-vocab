@@ -265,6 +265,14 @@ with tabs[3]:
         st.success(f"Score: {score}/{len(st.session_state.quiz)}")
 
         if st.button("Start New Quiz"):
-            st.session_state.pop("quiz")
-            st.session_state.pop("answers")
+            # Clear quiz data
+            st.session_state.pop("quiz", None)
+            st.session_state.pop("answers", None)
+
+            # Clear radio button widget state
+            for key in list(st.session_State.keys()):
+                if key.startswith("q"):
+                    del st.session_State[key]
+                    
             st.rerun()
+
